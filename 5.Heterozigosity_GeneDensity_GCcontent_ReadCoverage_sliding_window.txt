@@ -52,7 +52,7 @@
 # the coverage of Hiseq on each window was calculated as : (number of reads * median read length)/window length
 
 # Map long reads on final genome assembly:
-		minimap2 -t 8 -x ava-ont ANU_283scf.fasta VN18_nano_cleaned.fastq.gz | samtools sort -@4 -O BAM > Longread_vs_canu.bam
+		minimap2 -t 8 -x map-ont CANU_283scf.fasta VN18_nano_cleaned.fastq.gz | samtools sort -@4 -O BAM > Longread_vs_canu.bam
 
 # sliding windows and long-read coverage
 		bedtools makewindows -g CANU_283scf_length.bed -w 10000 | bedtools multicov -bed - -abam Longread_vs_canu.bam > Long_reads_count_sliding_10kb.txt
