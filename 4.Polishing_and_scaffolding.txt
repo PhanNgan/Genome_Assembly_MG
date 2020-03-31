@@ -1,0 +1,90 @@
+# Long reads were used to correct all the assemblies using racon v1.3.3 in four times
+# Then scaffolds corrected by Racon were continued to polished with short reads using Pilon 
+# The corrected reads were then scaffolded using SCUBAT. To scaffold the genome, a set of 66,396 transcripts (Petitot et al., 2016) was blasted to the genome assemblies. Then, the Perl script SCUBAT v.2 was used to identify transcripts that were split over multiple contigs. This information was then used to concatenate the contigs
+
+
+###################################### I. Correction using Racon v1.3.3 ##############################################
+READS_SAMPLE=VN18_nano_cleaned.fastq.gz
+DRAFT=scaffolds.fasta  ##scaffolds obtained from five assemblies
+
+#retrieve the name of the fastq file
+for i in $(echo ${READS_SAMPLE} | tr "/" "\n")
+do
+  FASTQFILE=$i
+done
+FASTQFILENAME=`echo ${FASTQFILE} | cut -d \. -f 1` # VN18_nano_cleaned
+
+# retrieve the name of the draft fasta
+for i in $(echo ${DRAFT} | tr "/" "\n")
+do
+  DRAFTFILE=$i
+done
+DRAFTFILENAME=`echo ${DRAFTFILE} | cut -d \. -f 1` #VN18_minimap2_miniasm_draft
+
+echo "FASTQFILENAME $FASTQFILENAME"
+echo "DRAFTFILENAME $DRAFTFILENAME"
+
+# Correction 1
+minimap2 -t 8 $DRAFTFILE $FASTQFILE >  $DRAFTFILENAME.gfa1.paf
+#racon1
+racon -t 8 $FASTQFILE $DRAFTFILENAME.gfa1.paf  $DRAFTFILENAME.fasta > $DRAFTFILENAME.gfa1.racon1.fasta
+
+# Correction 2 (optional)
+minimap2 -t 8 $DRAFTFILENAME.gfa1.racon1.fasta $FASTQFILE > $DRAFTFILENAME.gfa2.paf
+# racon2
+racon -t 8 $FASTQFILE $DRAFTFILENAME.gfa2.paf $DRAFTFILENAME.gfa1.racon1.fasta > $DRAFTFILENAME.gfa2.racon2.fasta
+
+# Correction 3 (optional)
+minimap2 -t 8 $DRAFTFILENAME.gfa2.racon2.fasta $FASTQFILE >$DRAFTFILENAME.gfa3.paf
+# racon3
+racon -t 8 $FASTQFILE $DRAFTFILENAME.gfa3.paf $DRAFTFILENAME.gfa2.racon2.fasta > $DRAFTFILENAME.gfa3.racon3.fasta
+
+# Correction 4 (optional)
+minimap2 -t 8 $DRAFTFILENAME.gfa3.racon3.fasta $FASTQFILE >$DRAFTFILENAME.gfa4.paf
+# racon2
+racon -t 8 $FASTQFILE $DRAFTFILENAME.gfa4.paf $DRAFTFILENAME.gfa3.racon3.fasta > $DRAFTFILENAME.gfa4.racon4.fasta
+
+
+
+
+
+###################################### II. Correction using Pilon v1.23 ###############################################
+
+# map illumina vs scaffolds obtained from Racon corrections 
+
+MINIMAP2 -t 8 -ax sr scaffolds.fasta Vn18_Hiseq_cleaned_mitofree_1.fastq Vn18_Hiseq_cleaned_mitofree_2.fastq| samtools sort -@ 2 -T mappings.sorted.tmp -o mappings.sorted.bam
+# indexing bam
+samtools index mappings.sorted.bam
+
+# filter only correctly paired mapped reads
+samtools view -f 2 -o mappings.proper-pairs.bam mappings.sorted.bam
+
+# indexing bam
+samtools index mappings.proper-pairs.bam
+
+# polish with pilon
+java -Xmx100G -jar ./pilon-1.23.jar --genome scaffolds.fasta --frags mappings.proper-pairs.bam --output polish --threads 8
+
+# mapping polished scaffolds with ref
+mkdir mapref
+nucmer -t 8 --delta mapref/polishvsref.delta ref.fasta polish.fasta
+dnadiff --prefix mapref/polishvsref -d mapref/polishvsref.delta
+
+
+
+
+
+
+
+###################################### III. Scaffolding using SCUBAT2 ###############################################
+
+##make blast database for polished scaffolds
+makeblastdb -in scaffold_polished.fasta -dbtype nucl -parse_seqids   ##scaffolds of all five assemblies after polishing using Racon and Pilon
+
+##Blastn 66,396 transcripts of M. graminicola obtained from Petitot et al. 2016 to the polished scaffolds
+blastn -query Transcriptome_Ref_Graminicola.fa -db scaffold_polished.fasta -num_threads 8 -outfmt 5 -evalue 1e-25 -out blastn_transcripts.xml
+
+##Run SCUBAT, with max intron size allowed of 20000
+python SCUBAT_v2.py -b blastn_transcripts.xml -f scaffold_polished.fasta -max 20000  ###output SCUBAT_scaffold_polished.fasta
+
+

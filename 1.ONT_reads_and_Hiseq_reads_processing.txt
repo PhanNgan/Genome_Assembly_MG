@@ -1,0 +1,84 @@
+################# I. NANOPORE READS: TRIMMING AND MITOCHONDRIAL REMOVAL #################
+
+# Quality check with nanopack
+		NanoPlot  --fastq_rich VN18_nano.fastq.gz -o fastq_norich --verbose --N50
+
+# Trim adapter with Porechop
+		porechop -i VN18.fastq.gz -o VN18_nano_trimmed.fastq.gz #--threads 8
+
+# Quality trim with NanoFilt
+		NanoFilt -q 7 VN18_nano_trimmed.fastq.gz | gzip > VN18_nano_trimmed_filtered.fastq.gz
+
+### Remove mitochondrial reads
+		minimap2 -ax map-ont NC_024275.1.fasta VN18_nano_trimmed_filtered.fastq.gz | samtools fastq -n -f 4 - > VN18_nano_cleaned.fastq.gz
+
+
+
+
+
+########### II. ILLUMINA READS: QUALITY CONTROL,TRIMMING, CLEANING AND MITOCHONDRIAL REMOVAL #######################
+# Check quality with fastqc
+		fastqc MgVN18_Hiseq_raw_R*.fastq.gz
+
+#Trimming quality with Skewer
+
+		skewer -n -q 30 -l 51 - t 16 -m pe -o MgVn18_trimmed MgVN18_Hiseq_raw_R1.fastq.gz MgVN18_Hiseq_raw_R1.fastq.gz
+
+
+# Pre-assembly with Platanus
+		Platanus assemble –o Vn18_preassemble –f MgVn18_trimmed_R*.fastq  –t 16 –m 128 2> assemble.log
+
+# Search NCBI nt with blast
+		blastn -task megablast -query  Vn18_preassemble_contig.fa -db nt -culling_limit 2 -out Vn18_preassemble_nt.tsv -outfmt '6 qseqid staxids bitscore std sscinames sskingdoms stitle' -num_threads 16 -evalue 1e-25 
+
+# Map Hiseq against pre-assembled contig with BWA
+		bwa index Vn18_preassemble_contig.fa #index the fasta file
+		bwa mem -t 4 Vn18_preassemble_contig.fa MgVn18_trimmed_R1.fastq MgVn18_trimmed_R1.fastq | samtools sort -@4 -O BAM -o Vn18_preasembled.bam #map hiseq to preassemble contig
+		samtools index Vn18_preasembled.bam #index bam file
+
+
+# Screening by Blobtools
+		blobtools create -i Vn18_preassemble_contig.fa -b Vn18_preasembled.bam -t Vn18_preassemble_nt.tsv --db ./data/nodesDB.txt -o Vn18_preassembled_blobtool #Create the BlobDB JSON file
+		blobtools view -i Vn18_preassembled_blobtool.blobDB.json #Generate a table
+		blobtools plot -i Vn18_preassembled_blobtool.blobDB.json #Create the plot
+
+# Some contamination of Proteobacteria was found, therefore, need to remove from the Hiseq data
+# Remove contigs hit to Proteobacteria 
+		grep -v "#" Vn18_preassembled_blobtool.blobDB.table.txt | grep -v "Proteobacteria" | cut -f1 > Vn18_preassemble_cleaned.list
+
+# Get clean pre-assembled contigs uing one-line Perl
+		perl -ne 'if(/^>(\S+)/){$c=$i{$1}}$c?print:chomp;$i{$_}=1 if @ARGV' Vn18_preassemble_cleaned.list Vn18_preassemble_contig.fa > Vn18_preassemble_cleaned.fasta
+
+# Get cleaned read using Bowtie2
+
+		bowtie2-build  Vn18_preassemble_cleaned.fasta Vn18_preassemble_cleaned 
+		bowtie2 -x Vn18_preassemble_cleaned -p 4 -L 20 -1 -2 –S Vn18_preassembled.sam --al-conc ./Vn18_Hiseq_cleaned.fastq   ##output are cleaned paired-end sequences Vn18_Hiseq_cleaned_1.fastq and Vn18_Hiseq_cleaned_2.fastq
+
+# Removed of mitochondrial reads by mapping with reference mitogenome of M. graminicola NCBI accession: NC_024275.1 and get the unmapped reads
+
+		bowtie2-build NC_024275.1.fasta NC_024275.1
+		bowtie2 -x NC_024275.1 -p 4 -L 20 -1 -2 –S Vn18_Hiseq_vs_mito.sam --un-conc ./Vn18_Hiseq_cleaned_mitofree.fastq ##output are cleaned and mito-free paired-end reads Vn18_Hiseq_cleaned_mitofree_1.fastq and Vn18_Hiseq_cleaned_mitofree_2.fastq
+
+
+
+
+
+
+############### III. K-MER ANALYSYS ##################
+#Count kmers using jellyfish:
+jellyfish count -C -m 21 -s 1000000000 -t 10 Vn18_Hiseq_cleaned_mitofree_*.fastq -o Vn18_reads.jf ##the same with k-mer value 17, 27, and 47
+
+#Export the kmer count histogram
+jellyfish histo -h 1000000 -t 10 Vn18_reads.jf > Vn18_reads.histo
+
+#Upload reads.histo to GenomeScope (http://qb.cshl.edu/genomescope/) 
+Kmer length 21 ##change if k-mer value 17, 27, and 47
+Read length 150
+Max kmer coverage 900000
+
+
+
+
+
+
+

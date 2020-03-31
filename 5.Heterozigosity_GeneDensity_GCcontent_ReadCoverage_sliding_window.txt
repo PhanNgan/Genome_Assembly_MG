@@ -1,0 +1,61 @@
+###### I. Calculate heterozygosity in sliding genome window
+# 1. Calling heterozygous SNPs between two haplomes
+# 	The short reads (FASTQ) were mapped in final assembly and call for single nucleotide polymorphisms using TOGGLE
+# 	The configuration file "SNPdiscoveryPaired.config.txt" was obtain at https://github.com/SouthGreenPlatform/TOGGLE/blob/master/exampleConfigs/SNPdiscoveryPaired.config.txt
+# 	Following the configuration, the SNPs were called and filtered from LowQual, DP < 10 and DP > 600, QUAL < 30
+		toggleGenerator.pl -d FASTQ -r $path_to_tmp/CANU_283scf.fasta  -c SNPdiscoveryPaired.config.txt -o Hiseq_canu
+
+#	Only heterozygous SNVs were selected
+		vcftools --vcf Hiseq_canu.vcf --recode --remove-indels --out Hiseq_canu_onlysnps.vcf
+		grep -v "1/1" Hiseq_canu_onlysnps.vcf | grep -v "1/2" | grep -v "1/3" > Hiseq_canu_hetero_snps.vcf 
+		grep "#" Hiseq_canu_onlysnps.vcf > comments
+		cat comments Hiseq_canu_hetero_snps.vcf > Hiseq_canu_hetero_snps_full.vcf 
+
+# 2.SNPs density per 10kb sliding genome window
+		bedops --chop 10000 --stagger 1000 -x <(awk -vOFS="\t" '{ print $1, "0", $2; }' CANU_283scf_length.bed | sort-bed -) | bedmap --echo --count --delim '\t' - <(vcf2bed < Hiseq_canu_hetero_snps_full.vcf) > count_snp_10kb.txt
+# 	Note: sliding windows at the end of contigs (which is less than 10kb) and all contigs have length less than 10kb also were taken in consideration
+		bedmap --echo --count --delim '\t'  contig_tails_and_small_contig_less_than_10kb.bed <(vcf2bed < Hiseq_canu_hetero_snps_full.vcf ) >  contig_tails_and small_contig_less_than_10kb_SNP_count.txt
+		cat count_snp_10kb.txt contig_tails_and small_contig_less_than_10kb_SNP_count.txt | sort -k1r -k2g > SNP_count_total_sliding_windows.txt
+#	Heterozygosity (%) in each window was calculated as: (number heterozygous SNP / window length )* 100
+
+
+
+###### II. Calulate gene_density per sliding genome window
+#	gene_density per sliding genome window
+		bedops --chop 10000 --stagger 1000 -x <(awk -vOFS="\t" '{ print $1, "0", $2; }' CANU_283scf_length.bed | sort-bed -) | bedmap --echo --count --delim '\t' - <(gff2bed < genes.gff) > count_gene_10kb.txt
+		bedmap --echo --count --delim '\t' contig_tails_and_small_contig_less_than_10kb.bed <(gff2bed < ./data/genes.gff) > contig_tails_and small_contig_less_than_10kb_gene_count.txt
+		cat count_gene_10kb.txt contig_tails_and small_contig_less_than_10kb_gene_count.txt | sort -k1r -k2g > gene_count_total_sliding_window.txt
+#	Gene density in each window was calculated as: number of gene count / window length
+
+
+
+
+###### III. calculate GC content per 1kb sliding genome window and for HGT
+#	Calculate GC content per 1kb sliding window
+		bedtools makewindows -g CANU_283scf_length.bed -w 1000 -s 100 -i srcwinnum >  CANU_283scf_1kb.windows.bed
+		bedtools nuc -fi CANU_283scf.fasta -bed ANU_283scf_1kb.windows.bed > GC_content_1kb.txt
+
+#	Calculate GC content for HGTs
+		bedtools nuc -fi CANU_283scf.fasta -bed HGT_gene_pos.bed > HGT_gene_GC_content.txt
+
+
+
+###### IV. Calculate short reads and long reads coverage per sliding windows
+# map short reads to final assembly and removed secondary and complementary aligments
+		bwa mem -t 4 CANU_283scf.fasta Vn18_Hiseq_cleaned_mitofree_1.fastq Vn18_Hiseq_cleaned_mitofree_2.fastq | samtools view -h -F 0x900 | samtools sort -@4 -O BAM > Hiseq_vs_Canu.bam
+
+# Sliding windows and short-read coverage
+		bedtools makewindows -g CANU_283scf_length.bed -w 10000 | bedtools multicov -bed - -bams Hiseq_vs_Canu.bam > Hiseq_count_sliding_10kb.txt
+		bedtools multicov -bed contig_tails_and_small_contig_less_than_10kb.bed -bams Hiseq_vs_Canu.bam > Hiseq_count_contig_tails_and_small_contig_less_than_10kb.txt
+		cat Hiseq_count_sliding_10kb.txt Hiseq_count_contig_tails_and_small_contig_less_than_10kb.txt | sort -k1r -k2g > Hiseq_count_total_sliding_windows.txt
+# the output give the number of reads mapped on each window
+# the coverage of Hiseq on each window was calculated as : (number of reads * median read length)/window length
+
+# Map long reads on final genome assembly:
+		minimap2 -t 8 -x ava-ont ANU_283scf.fasta VN18_nano_cleaned.fastq.gz | samtools sort -@4 -O BAM > Longread_vs_canu.bam
+
+# sliding windows and long-read coverage
+		bedtools makewindows -g CANU_283scf_length.bed -w 10000 | bedtools multicov -bed - -abam Longread_vs_canu.bam > Long_reads_count_sliding_10kb.txt
+		bedtools multicov -bed contig_tails_and_small_contig_less_than_10kb.bed -bams Longread_vs_canu.bam > Longread_count_contig_tails_and_small_contig_less_than_10kb.txt
+		cat Long_reads_count_sliding_10kb.txt Longread_count_contig_tails_and_small_contig_less_than_10kb.txt | sort -k1r -k2g > Longread_count_total_sliding_windows.txt
+# the coverage of Long reads on each window was calculated as : (number of reads * median read length)/window length

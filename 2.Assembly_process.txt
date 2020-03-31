@@ -1,0 +1,97 @@
+#Five assemblers were used to assemble the genome: Canu, Ra, MaSuRCA, Flye and Miniasm
+# I. CANU v1.8
+# II. RA-ASSEMBLER v1.0
+# III. FLYE v2.4.1
+# IV.  MASURCA v3.2.4
+# V. MINIMAP V2.2.16 - MINIASM v0.3 - 4xRACON v1.3.3
+
+
+############################## I. CANU v1.8 #######################
+##Genome assembly using CANU v1.8
+canu genomeSize=60M -nanopore-raw VN18_nano_cleaned.fastq.gz -d . -p Mgra-canu60M useGrid=0 gnuplot="/usr/local/gnuplot-5.0.4/bin/gnuplot" corOutCoverage=100 mhapSensitivity=normal corMhapSensitivity=normal correctedErrorRate=0.144
+
+
+############################## II. RA-ASSEMBLER v1.0 ###############
+##Genome assembly using Ra v1.0
+ra -t 8 -x ont VN18_nano_cleaned.fastq.gz > VN18_Ra.fasta
+
+
+############################## III. FLYE v2.4.1 #######################
+##Genome assembly using Flye v2.4.1
+TMP_FOLDER=Vn18_Flye
+genome_size="75m"
+treads=10
+flye --nano-raw VN18_nano_cleaned.fastq.gz --out-dir $TMP_FOLDER --genome-size $genome_size --threads $treads
+
+
+############################### IV.  MASURCA v3.2.4  ####################
+#Genome assembly using MaSuRCA v3.2.4
+#Create configuration file for MaSuRCA
+TMP_FOLDER=Vn18_Masurca
+echo "creating conf_file to masurca ..."
+echo "DATA" > $TMP_FOLDER/config_file
+echo "PE= pe 180 20  $TMP_FOLDER/Vn18_Hiseq_cleaned_mitofree_1.fastq.gz $TMP_FOLDER/Vn18_Hiseq_cleaned_mitofree_2.fastq.gz" >> $TMP_FOLDER/config_file
+echo "NANOPORE=$TMP_FOLDER/VN18_nano_cleaned.fastq.gz" >> $TMP_FOLDER/config_file
+echo "END" >> $TMP_FOLDER/config_file
+echo "" >> $TMP_FOLDER/config_file
+echo "PARAMETERS" >> $TMP_FOLDER/config_file
+echo "EXTEND_JUMP_READS=0" >> $TMP_FOLDER/config_file
+echo "GRAPH_KMER_SIZE = auto" >> $TMP_FOLDER/config_file
+echo "USE_LINKING_MATES = 0" >> $TMP_FOLDER/config_file
+echo "USE_GRID=0" >> $TMP_FOLDER/config_file
+echo "GRID_QUEUE=bioinfo.q" >> $TMP_FOLDER/config_file
+echo "GRID_BATCH_SIZE=300000000" >> $TMP_FOLDER/config_file
+echo "LHE_COVERAGE=30" >> $TMP_FOLDER/config_file
+echo "LIMIT_JUMP_COVERAGE = 300" >> $TMP_FOLDER/config_file
+echo "CA_PARAMETERS = cgwErrorRate=0.15" >> $TMP_FOLDER/config_file
+echo "KMER_COUNT_THRESHOLD = 1" >> $TMP_FOLDER/config_file
+echo "CLOSE_GAPS=1" >> $TMP_FOLDER/config_file
+echo "NUM_THREADS = 8" >> $TMP_FOLDER/config_file
+echo "JF_SIZE = 200000000" >> $TMP_FOLDER/config_file
+echo "SOAP_ASSEMBLY=0" >> $TMP_FOLDER/config_file
+echo "END" >> $TMP_FOLDER/config_file
+
+#Obtainig conf file to masurca
+masurca $TMP_FOLDER/config_file
+
+# Execute program
+bash $TMP_FOLDER/assemble.sh
+
+############################## V. MINIMAP V2.2.16 - MINIASM v0.3 - 4xRACON v1.3.3 #####################
+#Genome assembly using minimap2 and miniasm. Then racon was used to correct the assembly four times
+
+TMP_FOLDER=Vn18_miniasm
+#exec minimap2 .. generating paf
+minimap2 -t 8 -x ava-ont $TMP_FOLDER/VN18_nano_cleaned.fastq.gz $TMP_FOLDER/VN18_nano_cleaned.fastq.gz > $TMP_FOLDER/VN18_minimap2.paf
+
+#exec miniasm .. generating assembly"
+miniasm -f $TMP_FOLDER/VN18_nano_cleaned.fastq.gz  $TMP_FOLDER/VN18_minimap2.paf > $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa
+
+# Consensus
+## GFA to fasta
+awk '$1 ~/S/ {print ">"$2"\n"$3}' $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa > $TMP_FOLDER/VN18_minimap2_miniasm_draft.fasta
+
+#Correction 1
+minimap2 -t 8 $TMP_FOLDER/VN18_minimap2_miniasm_draft.fasta $TMP_FOLDER/VN18_nano_cleaned.fastq.gz >  $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa1.paf
+#racon1
+racon -t 8 $TMP_FOLDER/VN18_nano_cleaned.fastq.gz $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa1.paf  $TMP_FOLDER/VN18_minimap2_miniasm_draft.fasta > $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa1.racon1.fasta
+
+# Correction 2 (optional)
+minimap2 -t 8 $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa1.racon1.fasta $TMP_FOLDER/VN18_nano_cleaned.fastq.gz >$TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa2.paf
+#racon2
+racon -t 8 $TMP_FOLDER/VN18_nano_cleaned.fastq.gz $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa2.paf $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa1.racon1.fasta > $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa2.racon2.fasta
+
+# Correction 3 (optional)
+minimap2 -t 8 $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa2.racon2.fasta $TMP_FOLDER/VN18_nano_cleaned.fastq.gz >$TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa3.paf
+#racon3
+racon -t 8 $TMP_FOLDER/VN18_nano_cleaned.fastq.gz $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa3.paf $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa2.racon2.fasta > $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa3.racon3.fasta
+
+# Correction 4 (optional)
+minimap2 -t 8 $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa3.racon3.fasta $TMP_FOLDER/VN18_nano_cleaned.fastq.gz >$TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa4.paf
+#racon2
+racon -t 8 $TMP_FOLDER/VN18_nano_cleaned.fastq.gz $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa4.paf $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa3.racon3.fasta > $TMP_FOLDER/VN18_minimap2_miniasm_draft.gfa4.racon4.fasta
+
+
+
+
+

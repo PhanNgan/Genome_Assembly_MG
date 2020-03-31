@@ -1,0 +1,58 @@
+### At this step, three assemblies obtained from Ra, Canu and MaSuRCA was sellected for further analysis. 
+### Therefore, the scaffolds from these three assemblies (after polising and scaffolding) were used for purging haplotigs
+
+############################## I. PURGING HAPLOTIGS USING LONG READS MAPPING FILE #############################################
+###	map long reads to scaffolds after polishing and scaffolding
+		minimap2 -t 8 -x ava-ont SCUBAT_masurca.fasta VN18_nano_cleaned.fastq.gz | samtools sort -@4 -O BAM -o nano_SCUBAT_masurca.bam
+		minimap2 -t 8 -x ava-ont SCUBAT_Ra_polished.fasta VN18_nano_cleaned.fastq.gz | samtools sort -@4 -O BAM -o nano_SCUBAT_Ra_polished.bam
+		minimap2 -t 8 -x ava-ont SCUBAT_CANU_polished.fasta  VN18_nano_cleaned.fastq.gz | samtools sort -@4 -O BAM -o nano_SCUBAT_CANU_polished.bam
+
+#### Step1: Coverage analysis base on long reads
+		purge_haplotigs readhist  -b nano_SCUBAT_masurca.bam  -g SCUBAT_masurca.fasta -t 4
+		purge_haplotigs readhist  -b nano_SCUBAT_Ra_polished.bam  -g SCUBAT_Ra_polished.fasta -t 4
+		purge_haplotigs readhist  -b nano_SCUBAT_CANU_polished.bam  -g SCUBAT_CANU_polished.fasta -t 4
+
+#### Step 2 : Analyse the coverage on a contig by contig basis using cut-off value obtained from step 1. This script produces a contig coverage stats csv file with suspect contigs flagged for further analysis or removal
+		purge_haplotigs  contigcov  -i nano_SCUBAT_masurca.bam.gencov -l 10 -m 37 -h 195
+		purge_haplotigs  contigcov  -i nano_SCUBAT_Ra_polished.bam.gencov -l 10 -m 33 -h 195
+		purge_haplotigs  contigcov  -i nano_SCUBAT_CANU_polished.bam.gencov -l 10 -m 38 -h 195
+
+### Step 3 : Run the purging haplotig pipeline.
+		purge_haplotigs purge  -g SCUBAT_masurca.fasta  -c coverage_stats.csv -d  -b nano_SCUBAT_masurca.bam  -o ./purged_nano_masurca
+		purge_haplotigs purge  -g SCUBAT_Ra_polished.fasta  -c coverage_stats.csv -d  -b nano_SCUBAT_Ra_polished.bam  -o ./purged_nano_RA
+		purge_haplotigs purge  -g SCUBAT_CANU_polished.fasta  -c coverage_stats.csv -d  -bnano_SCUBAT_CANU_polished.bam  -o ./purged_nano_CANU
+
+
+############################### II. CONTAMINANT SCREENING AND REMOVAL ########################################################
+# Map short reads on final genome assemnly
+		bwa index CANU_purged_357scf.fasta 
+		bwa mem -t 4 CANU_purged_357scf.fasta Vn18_Hiseq_cleaned_mitofree_1.fastq Vn18_Hiseq_cleaned_mitofree_2.fastq | samtools sort -@4 -O BAM > Hiseq_vs_Canu_purged_357scf.bam
+# Search NCBI nt with blast
+		blastn -task megablast -query CANU_purged_357scf.fasta  -db nt -culling_limit 2 -out CANU_purged_357scf_nt.tsv -outfmt '6 qseqid staxids bitscore std sscinames sskingdoms stitle' -num_threads 16 -evalue 1e-25 
+
+# Create blobtools graph
+		blobtools create -i CANU_purged_357scf.fasta -b Hiseq_vs_Canu_purged_357scf.bam -t CANU_purged_357scf_nt.tsv -o CANU_purged_357scf --db ./data/nodesDB.txt
+		blobtools view -i CANU_purged_357scf.blobDB.json
+		blobtools plot -i CANU_purged_357scf.blobDB.json
+# At this step 74 contigs annotated as Chordata with coverage less than 100X was removed manually 
+# Take fasta sequences for cleaned contigs
+		perl -ne 'if(/^>(\S+)/){$c=$i{$1}}$c?print:chomp;$i{$_}=1 if @ARGV' list_283scf_cleaned CANU_purged_357scf.fasta > CANU_283scf.fasta
+
+
+
+############################### III. ASSEMBLY METRICS AND COMPLETENESS  ########################################################
+## Assembly metrics of all fasta files were obtained using QUAST (http://quast.sourceforge.net) 
+## The scaffolds obtained from innitial assembly, after polishing, after purging haplotig, and after cleaning process were assessed using BUSCO using the same command below:
+
+		python3 /usr/local/BUSCO-3.0.2/scripts/run_BUSCO.py -i scaffolds.fasta -o BUSCO_results -l eukaryota_odb9 -m genome -c 1 --long -sp caenorhabditis
+
+## The CEGMA completess was calculated at https://gvolante.riken.jp/analysis.html using parameter below:
+		Cut-off length for sequence statistics and base composition: 1
+		Sequence type: Genome (nucleotide)
+		Choose an ortholog search pipeline: CEGMA
+		Ortholog set for CEGMA: CEG (for eukaryotes)
+		Gene prediction parameters for CEGMA: Non-vertebrate
+		Max intron length: 5000 nt, Gene flanks: 2000 nt 
+
+
+ 
