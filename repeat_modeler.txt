@@ -1,0 +1,7 @@
+BuildDatabase -name Mgra_canu_scf.RMOD.DB -engine ncbi Mgra_canu_scf.fasta
+
+qsub -q bioinfo2.q@node23 -b yes -V -N repeatMod_Mgra -pe ompi 8 'module load bioinfo/RepeatModeler/1.0.10; RepeatModeler -database /scratch/orjuela-maker/repeatmasker/Mgra_canu_scf.RMOD.DB -engine ncbi -pa 8'
+
+Note: RepeatModeler mets le resultats dans le home
+
+qsub -q bioinfo2.q@node23 -b yes -V -N repeatMasker_Mgra -pe ompi 8 'module load system/perl/5.24.0; module load bioinfo/RepeatMasker/4.0.7; RepeatMasker -pa 8 -gff -nolow -lib /scratch/orjuela-maker/repeatmasker/RM_29353.FriSep131107232019/consensi.fa.classified /scratch/orjuela-maker/repeatmasker/Mgra_canu_scf.fasta'
